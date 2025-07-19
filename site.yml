@@ -1,0 +1,149 @@
+---
+- name: Install Tor
+  hosts: localhost
+  become: true
+  vars:
+    tor_codename: "{{ ansible_lsb.codename }}"
+    tor_key_url: https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc
+    tor_keyring_path: /usr/share/keyrings/deb.torproject.org-keyring.gpg
+    tor_repo_entry: "deb [signed-by={{ tor_keyring_path }}] https://deb.torproject.org/torproject.org {{ tor_codename }} main"
+
+  tasks:
+    - name: Ensure prerequisites installed
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - gnupg
+          - wget
+        state: present
+        update_cache: true
+
+    - name: Add Tor Project GPG key
+      ansible.builtin.apt_key:
+        url: "{{ tor_key_url }}"
+        keyring: "{{ tor_keyring_path }}"
+        state: present
+
+    - name: Add Tor APT repository
+      ansible.builtin.apt_repository:
+        repo: "{{ tor_repo_entry }}"
+        filename: torproject
+        state: present
+        update_cache: true
+
+    - name: Install Tor
+      ansible.builtin.apt:
+        name:
+          - tor
+          - deb.torproject.org-keyring
+        state: present
+        update_cache: true
+
+- name: Configure Transparent Tor Proxy
+  hosts: localhost
+  become: true
+  vars:
+    tor_interface: "wg0"
+    tor_user: "debian-tor"
+    tor_trans_port: 9040
+    socat_dns_port: 53
+    tor_socks_port: 9050
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - tor
+          - socat
+          - iptables-persistent
+        state: present
+        update_cache: true
+
+    - name: Ensure IP forwarding is enabled
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+        reload: true
+
+    - name: Configure Tor (torrc)
+      ansible.builtin.blockinfile:
+        mode: "0644"
+        owner: root
+        group: root
+        path: /etc/tor/torrc
+        block: |
+          User {{ tor_user }}
+          Log notice file /var/log/tor/notices.log
+          VirtualAddrNetwork 10.192.0.0/10
+          AutomapHostsOnResolve 1
+          TransPort {{ tor_trans_port }}
+          SocksPort {{ tor_socks_port }}
+        create: true
+      notify: Restart Tor
+
+    - name: Fetch headers from tor.cloudflare-dns.com
+      ansible.builtin.uri:
+        url: https://tor.cloudflare-dns.com
+        method: HEAD
+      register: cloudflare_headers
+
+    - name: Extract and set the DNS IP address fact
+      ansible.builtin.set_fact:
+        dns_ip: >-
+          {{ cloudflare_headers.alt_svc | regex_search('(?<=h2=")[^:]+') }}
+
+    - name: Create systemd service for socat DNS forwarder to Cloudflare
+      ansible.builtin.copy:
+        mode: "0644"
+        owner: root
+        group: root
+        dest: /etc/systemd/system/socat-dns.service
+        content: |
+          [Unit]
+          Description=socat DNS forwarder to Cloudflare via Tor
+          After=network.target
+          Wants=tor.service
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat UDP4-LISTEN:{{ socat_dns_port }},fork,reuseaddr SOCKS4A:127.0.0.1:{{ dns_ip }}:53,socksport={{ tor_socks_port }}
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+        - Restart socat DNS
+
+    - name: Create iptables rules script
+      ansible.builtin.template:
+        src: templates/iptables-rules.sh.j2
+        dest: /usr/local/bin/apply-tor-rules.sh
+        mode: "0755"
+
+    - name: Apply iptables rules
+      ansible.builtin.command: /usr/local/bin/apply-tor-rules.sh
+      changed_when: true
+      notify: Save iptables rules
+
+  handlers:
+    - name: Restart Tor
+      ansible.builtin.systemd:
+        name: tor
+        state: restarted
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart socat DNS
+      ansible.builtin.systemd:
+        name: socat-dns
+        state: restarted
+        enabled: true
+
+    - name: Save iptables rules
+      ansible.builtin.command: netfilter-persistent save
+      changed_when: false

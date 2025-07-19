@@ -1,0 +1,16 @@
+#!/bin/bash
+# Flush existing rules
+iptables -F
+iptables -t nat -F
+
+# === NAT PREROUTING: Redirect incoming traffic from the specified interface ===
+# Redirect DNS traffic (UDP/TCP port 53) to socat
+iptables -t nat -A PREROUTING -i {{ tor_interface }} -p udp --dport 53 -j REDIRECT --to-ports {{ socat_dns_port }}
+iptables -t nat -A PREROUTING -i {{ tor_interface }} -p tcp --dport 53 -j REDIRECT --to-ports {{ socat_dns_port }}
+
+# Redirect all other TCP traffic to Tor's TransPort
+iptables -t nat -A PREROUTING -i {{ tor_interface }} -p tcp --syn -j REDIRECT --to-ports {{ tor_trans_port }}
+
+# === FILTER FORWARD: Allow the redirected traffic to be forwarded ===
+iptables -A FORWARD -i {{ tor_interface }} -j ACCEPT
+iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
