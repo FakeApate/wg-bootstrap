@@ -22,16 +22,6 @@ table inet filter {
   }
 }
 
-table inet mangle {
-  chain prerouting {
-    type filter hook prerouting priority -150;
-
-    # only mark TCP+UDP (except tor control/dns) from wg0
-    iifname "wg0" ct state new tcp   mark set 1
-    iifname "wg0" ct state new udp   mark set 1
-  }
-}
-
 table ip nat {
   chain prerouting {
     type nat hook prerouting priority -100;
