@@ -1,0 +1,46 @@
+flush ruleset
+
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy accept;
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+
+    oifname "wg0" tcp flags syn tcp option maxseg size set 1240
+    iifname "wg0" tcp flags syn tcp option maxseg size set 1240
+
+    ct state related,established accept
+    ct state invalid drop
+
+    iifname "wg0" accept
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}
+
+table inet mangle {
+  chain prerouting {
+    type filter hook prerouting priority -150;
+
+    # only mark TCP+UDP (except tor control/dns) from wg0
+    iifname "wg0" ct state new tcp   mark set 1
+    iifname "wg0" ct state new udp   mark set 1
+  }
+}
+
+table ip nat {
+  chain prerouting {
+    type nat hook prerouting priority -100;
+    iifname "wg0" udp dport 53 redirect to :5353
+    iifname "wg0" tcp dport != {9050,9051} redirect to :9040
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority 100;
+    iifname "wg0" masquerade
+  }
+}

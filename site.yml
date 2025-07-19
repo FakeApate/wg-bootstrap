@@ -43,23 +43,13 @@
   hosts: localhost
   become: true
   vars:
-    tor_dns: "dns4torpnlfs2ifuz2s2yf3fc7rdmsbhm6rw75euj35pac6ap25zgqad.onion"
-    tor_interface: "wg0"
-    tor_user: "debian-tor"
     tor_trans_port: 9040
-    socat_dns_port: 853
     tor_socks_port: 9050
+    tor_dns_port: 5353
+    rt_table_id: 100
+    rt_table_name: tor
 
   tasks:
-    - name: Install required packages
-      ansible.builtin.apt:
-        name:
-          - tor
-          - socat
-          - iptables-persistent
-        state: present
-        update_cache: true
-
     - name: Configure Tor (torrc)
       ansible.builtin.blockinfile:
         mode: "0644"
@@ -67,52 +57,30 @@
         group: root
         path: /etc/tor/torrc
         block: |
-          User {{ tor_user }}
-          Log notice file /var/log/tor/notices.log
-          VirtualAddrNetwork 10.192.0.0/10
+          VirtualAddrNetworkIPv4 10.192.0.0/10
           AutomapHostsOnResolve 1
-          TransPort {{ tor_trans_port }}
-          SocksPort {{ tor_socks_port }}
+          TransPort {{ tor_trans_port }} IsolateClientAddr IsolateClientProtocol IsolateDestAddr IsolateDestPort
+          SocksPort {{ tor_socks_port }} IsolateClientAddr IsolateClientProtocol IsolateDestAddr IsolateDestPort
+          DNSPort {{ tor_dns_port }}
+          Log notice file /var/log/tor/notices.log
         create: true
       notify: Restart Tor
 
-    - name: Create systemd service for socat DNS forwarder to Cloudflare
-      ansible.builtin.copy:
-        mode: "0644"
+    - name: Load nftables template
+      ansible.builtin.template:
+        src: /templates/nftables.conf.j2
+        dest: /etc/nftables.conf
         owner: root
         group: root
-        dest: /etc/systemd/system/socat-dns.service
-        content: |
-          [Unit]
-          Description=socat DNS forwarder to Cloudflare via Tor
-          After=network.target
-          Wants=tor.service
-
-          [Service]
-          Type=simple
-          ExecStart=/usr/bin/socat UDP4-LISTEN:{{ socat_dns_port }},fork,reuseaddr SOCKS4A:127.0.0.1:{{ tor_dns }}:53,socksport={{ tor_socks_port }}
-          Restart=always
-          RestartSec=5
-
-          [Install]
-          WantedBy=multi-user.target
-      notify:
-        - Reload systemd
-        - Restart socat DNS
-
+        mode: "0644"
+      notify: Reload nftables
   handlers:
     - name: Restart Tor
       ansible.builtin.systemd:
         name: tor
         state: restarted
 
-    - name: Reload systemd
+    - name: Reload nftables
       ansible.builtin.systemd:
-        daemon_reload: true
-
-    - name: Restart socat DNS
-      ansible.builtin.systemd:
-        name: socat-dns
+        name: nftables
         state: restarted
-        enabled: true
-
