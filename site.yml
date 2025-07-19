@@ -47,7 +47,7 @@
     tor_interface: "wg0"
     tor_user: "debian-tor"
     tor_trans_port: 9040
-    socat_dns_port: 53
+    socat_dns_port: 853
     tor_socks_port: 9050
 
   tasks:
@@ -59,13 +59,6 @@
           - iptables-persistent
         state: present
         update_cache: true
-
-    - name: Ensure IP forwarding is enabled
-      ansible.posix.sysctl:
-        name: net.ipv4.ip_forward
-        value: "1"
-        state: present
-        reload: true
 
     - name: Configure Tor (torrc)
       ansible.builtin.blockinfile:
@@ -107,17 +100,6 @@
         - Reload systemd
         - Restart socat DNS
 
-    - name: Create iptables rules script
-      ansible.builtin.template:
-        src: templates/iptables-rules.sh.j2
-        dest: /usr/local/bin/apply-tor-rules.sh
-        mode: "0755"
-
-    - name: Apply iptables rules
-      ansible.builtin.command: /usr/local/bin/apply-tor-rules.sh
-      changed_when: true
-      notify: Save iptables rules
-
   handlers:
     - name: Restart Tor
       ansible.builtin.systemd:
@@ -134,6 +116,3 @@
         state: restarted
         enabled: true
 
-    - name: Save iptables rules
-      ansible.builtin.command: netfilter-persistent save
-      changed_when: false
