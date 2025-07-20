@@ -2,6 +2,7 @@
 - name: Install Tor
   hosts: localhost
   become: true
+  gather_facts: true
   vars:
     tor_codename: "{{ ansible_lsb.codename }}"
     tor_key_url: https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc
@@ -41,6 +42,7 @@
           - deb.torproject.org-keyring
         state: present
         update_cache: true
+
     - name: Install Tor
       ansible.builtin.apt:
         name:
@@ -53,8 +55,8 @@
         block: |
           VirtualAddrNetworkIPv4 10.192.0.0/10
           AutomapHostsOnResolve 1
-          TransPort 127.0.0.1:9040
-          DNSPort 127.0.0.1:5353
+          TransPort {{ ansible_wg0.ipv4.address }}:9040
+          DNSPort {{ ansible_wg0.ipv4.address }}:5353
           SocksPort 0
         path: /etc/tor/torrc
         create: true
@@ -62,6 +64,7 @@
         group: root
         mode: "0644"
       notify: Restart Tor
+
     - name: Validate Tor configuration syntax
       ansible.builtin.command:
         cmd: tor --verify-config
@@ -89,6 +92,7 @@
     - name: Set public_ip fact (strip whitespace)
       ansible.builtin.set_fact:
         public_ip: "{{ public_ip_response.content | trim }}"
+
     - name: Deploy template
       ansible.builtin.template:
         src: templates/nftables.conf.j2
@@ -97,6 +101,7 @@
         group: root
         mode: "0755"
       notify: Apply nftables
+
     - name: Disable IPv6 forwarding (all)
       ansible.builtin.lineinfile:
         path: /etc/sysctl.conf
@@ -104,6 +109,7 @@
         line: net.ipv6.conf.all.forwarding=0
         state: present
       notify: Apply sysctl
+
     - name: Disable IPv6 forwarding (default)
       ansible.builtin.lineinfile:
         path: /etc/sysctl.conf
