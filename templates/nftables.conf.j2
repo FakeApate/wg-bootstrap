@@ -29,7 +29,7 @@ table inet filter {
 table ip6 filter {
     chain input {
         type filter hook input priority 0; policy accept;
-        iifname "{{ wg_interface }}"s drop
+        iifname "{{ wg_interface }}" drop
     }
     chain forward {
         type filter hook forward priority 0; policy accept;
