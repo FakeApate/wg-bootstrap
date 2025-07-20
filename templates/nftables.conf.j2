@@ -16,11 +16,10 @@ table inet filter {
         ct state related,established accept
         ct state invalid drop
 
-        iifname "{{ wg_interface }}" ip daddr {127.0.0.1, {{ public_ip }} } tcp drop
+        iifname "{{ wg_interface }}" ip daddr {127.0.0.1, {{ public_ip }} } drop
         iifname "{{ wg_interface }}" tcp dport 1-65535 accept
         iifname "{{ wg_interface }}" udp dport 53 accept
 
-        iifname "{{ wg_interface }}" udp drop
     }
 
     chain output {
@@ -30,16 +29,15 @@ table inet filter {
 
 table ip6 filter {
     chain input {
-        type filter hook input priority 0;
-        drop
+        type filter hook input priority 0; policy allow;
+        iifname "wg0" drop
     }
     chain forward {
-        type filter hook forward priority 0;
-        drop
+        type filter hook forward priority 0; policy allow;
     }
     chain output {
-        type filter hook output priority 0;
-        drop
+        type filter hook output priority 0; policy allow;
+        oifname "wg0" drop
     }
 }
 
