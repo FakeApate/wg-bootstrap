@@ -5,7 +5,7 @@
   vars:
     tor_codename: "{{ ansible_lsb.codename }}"
     tor_key_url: https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc
-    tor_keyring_path: /usr/share/keyrings/deb.torproject.org-keyring.gpg
+    tor_keyring_path: /etc/apt/keyrings/tor-repo.asc
     tor_repo_entry: "deb [signed-by={{ tor_keyring_path }}] https://deb.torproject.org/torproject.org {{ tor_codename }} main"
 
   tasks:
@@ -17,24 +17,105 @@
           - wget
         state: present
         update_cache: true
-
-    - name: Add Tor Project GPG key
-      ansible.builtin.apt_key:
+    - name: Ensure /etc/apt/keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+    - name: Download GPG key for repository
+      ansible.builtin.get_url:
         url: "{{ tor_key_url }}"
-        keyring: "{{ tor_keyring_path }}"
-        state: present
+        dest: "{{ tor_keyring_path }}"
+        mode: "0644"
 
     - name: Add Tor APT repository
       ansible.builtin.apt_repository:
         repo: "{{ tor_repo_entry }}"
-        filename: torproject
         state: present
         update_cache: true
 
+    - name: Install keyring
+      ansible.builtin.apt:
+        name:
+          - deb.torproject.org-keyring
+        state: present
+        update_cache: true
     - name: Install Tor
       ansible.builtin.apt:
         name:
           - tor
-          - deb.torproject.org-keyring
         state: present
         update_cache: true
+
+    - name: Apply config
+      ansible.builtin.blockinfile:
+        block: |
+          VirtualAddrNetworkIPv4 10.192.0.0/10
+          AutomapHostsOnResolve 1
+          TransPort 127.0.0.1:9040
+          DNSPort 127.0.0.1:5353
+        path: /etc/tor/torrc
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Tor
+    - name: Validate Tor configuration syntax
+      ansible.builtin.command:
+        cmd: tor --verify-config
+      register: tor_config_validation
+      changed_when: false
+
+  handlers:
+    - name: Restart Tor
+      ansible.builtin.service:
+        name: tor
+        state: restarted
+
+- name: Setup network
+  hosts: localhost
+  become: true
+  vars:
+    wg_interface: "wg0"
+  tasks:
+    - name: Get public IP from ipify
+      ansible.builtin.uri:
+        url: https://ipv4.icanhazip.com
+        return_content: true
+      register: public_ip_response
+
+    - name: Set public_ip fact (strip whitespace)
+      ansible.builtin.set_fact:
+        public_ip: "{{ public_ip_response.content | trim }}"
+    - name: Deploy template
+      ansible.builtin.template:
+        src: templates/nftables.conf.j2
+        dest: /etc/nftables.conf
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Apply nftables
+    - name: Disable IPv6 forwarding (all)
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: ^net\.ipv6\.conf\.all\.forwarding\s*=
+        line: net.ipv6.conf.all.forwarding=0
+        state: present
+      notify: Apply sysctl
+    - name: Disable IPv6 forwarding (default)
+      ansible.builtin.lineinfile:
+        path: /etc/sysctl.conf
+        regexp: ^net\.ipv6\.conf\.default\.forwarding\s*=
+        line: net.ipv6.conf.default.forwarding=0
+        state: present
+      notify: Apply sysctl
+
+  handlers:
+    - name: Apply sysctl
+      ansible.builtin.command: sysctl -p
+      changed_when: false
+
+    - name: Apply nftables
+      ansible.builtin.systemd:
+        state: restarted
+        name: nftables

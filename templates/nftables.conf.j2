@@ -1,0 +1,56 @@
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet filter {
+
+    chain input {
+        type filter hook input priority 0;
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+
+        oifname "{{ wg_interface }}" tcp flags syn tcp option maxseg size set 1240
+        iifname "{{ wg_interface }}" tcp flags syn tcp option maxseg size set 1240
+
+        ct state related,established accept
+        ct state invalid drop
+
+        iifname "{{ wg_interface }}" ip daddr {127.0.0.1, {{ public_ip }} } tcp drop
+        iifname "{{ wg_interface }}" tcp dport 1-65535 accept
+        iifname "{{ wg_interface }}" udp dport 53 accept
+
+        iifname "{{ wg_interface }}" udp drop
+    }
+
+    chain output {
+        type filter hook output priority 0;
+    }
+}
+
+table ip6 filter {
+    chain input {
+        type filter hook input priority 0;
+        drop
+    }
+    chain forward {
+        type filter hook forward priority 0;
+        drop
+    }
+    chain output {
+        type filter hook output priority 0;
+        drop
+    }
+}
+
+table ip ipv4_nat {
+    chain prerouting {
+        type nat hook prerouting priority -100;
+
+        iifname "{{ wg_interface }}" tcp dport {1-65535} redirect to :9040
+        iifname "{{ wg_interface }}" udp dport 53 redirect to :5353
+    }
+    chain postrouting {
+        type nat hook postrouting priority 100;
+    }
+}
